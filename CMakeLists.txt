@@ -11,3 +11,16 @@ project(2dbeagle LANGUAGES CXX)
 # I specify WIN32 in order to create a WIN32 executable, which means that the application entry point becomes WinMain, instead of main.
 # This is essentially the SUBSYSTEM linker option of MSVC.
 add_executable(2dbeagle WIN32 src/main.cpp)
+
+# Add vulkan library
+# This uses the Module mode of find_pckage to find the Vulkan package on the system.
+# In this case, CMake provides a "Find Module" for Vulkan, which is "FindVulkan.cmake.
+# This module is used to find the Vulkan package on the system, using a set of usually known paths for Vulkan.
+# If successful, it will set the Vulkan_INCLUDE_DIRS and Vulkan_LIBRARIES variables, which can be used to include the Vulkan headers and link against the Vulkan libraries.
+find_package(Vulkan REQUIRED)
+
+# Add include directories for Vulkan
+target_include_directories(2dbeagle PRIVATE ${Vulkan_INCLUDE_DIRS})
+
+# Link against Vulkan libraries
+target_link_libraries(2dbeagle PRIVATE ${Vulkan_LIBRARIES})

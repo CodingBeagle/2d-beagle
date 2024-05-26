@@ -2,6 +2,12 @@
 #include <string>
 #include <iostream>
 
+#include <array>
+
+// In order to use the Win32 WSI extensions, we need to define VK_USE_PLATFORM_WIN32_KHR before including vulkan.h
+#define VK_USE_PLATFORM_WIN32_KHR
+#include <vulkan/vulkan.h>
+
 // Forward Decl
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 
@@ -75,6 +81,36 @@ int WINAPI WinMain(
     }
 
     ShowWindow(hwnd, nCmdShow);
+
+    // Create Vulkan Instance
+    // The Vulkan Instance is the connection between your application and the Vulkan library.
+    VkInstance vkInstance = VK_NULL_HANDLE;
+
+    VkApplicationInfo appInfo = {};
+    appInfo.sType = VK_STRUCTURE_TYPE_APPLICATION_INFO;
+    appInfo.pApplicationName = "2D Beagle";
+    appInfo.applicationVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.pEngineName = "No Engine";
+    appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
+    appInfo.apiVersion = VK_API_VERSION_1_0;
+
+    std::array<const char*, 2> instanceExtensions = {
+        "VK_KHR_surface",
+        "VK_KHR_win32_surface"
+    };
+
+    VkInstanceCreateInfo instanceCreateInfo = {};
+    instanceCreateInfo.sType = VK_STRUCTURE_TYPE_INSTANCE_CREATE_INFO;
+    instanceCreateInfo.pApplicationInfo = &appInfo;
+    instanceCreateInfo.enabledExtensionCount = 2;
+    instanceCreateInfo.ppEnabledExtensionNames = instanceExtensions.data();
+    instanceCreateInfo.enabledLayerCount = 0;
+
+    if (vkCreateInstance(&instanceCreateInfo, nullptr, &vkInstance) != VK_SUCCESS)
+    {
+        std::cout << "Failed to create Vulkan instance!" << std::endl;
+        return 1;
+    }
 
     MSG msg = {};
     auto running = true;

@@ -36,7 +36,6 @@ int WINAPI WinMain(
     WNDCLASSEX wcex = {};
 
     std::string window_class_name = "Main Game Window";
-    std::string window_title = "2D Beagle";
 
     // Size in bytes of structure. Must always be set to sizeof(WNDCLASSEX)
     wcex.cbSize = sizeof(WNDCLASSEX);
@@ -53,6 +52,9 @@ int WINAPI WinMain(
     }
 
     // Create window using the window class
+    std::string window_title = "2D Beagle";
+
+    // If CreateWindowEx fails, it returns NULL.
     HWND hwnd = CreateWindowEx(
         0,
         window_class_name.c_str(),
@@ -66,8 +68,35 @@ int WINAPI WinMain(
         NULL
     );
 
+    if (!hwnd)
+    {
+        std::cout << "Failed to create window." << std::endl;
+        return 1;
+    }
+
+    ShowWindow(hwnd, nCmdShow);
+
+    MSG msg = {};
+    auto running = true;
+    while (running) {
+        // Process all pending Windows messages
+        while (PeekMessage(&msg, NULL, 0, 0, PM_REMOVE))
+        {
+            if (msg.message == WM_QUIT)
+            {
+                running = false;   
+            }
+
+            TranslateMessage(&msg);
+            DispatchMessage(&msg);
+        }
+
+        // Update and render game here
+    }
+
     // Wait for user to press a key before closing the application
     // and thus the console window.
+    std::cout << "Press any key to exit..." << std::endl;
     std::cin.get();
 
     return 0;

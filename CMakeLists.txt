@@ -24,3 +24,6 @@ target_include_directories(2dbeagle PRIVATE ${Vulkan_INCLUDE_DIRS})
 
 # Link against Vulkan libraries
 target_link_libraries(2dbeagle PRIVATE ${Vulkan_LIBRARIES})
+
+# Set C++ 20 as the required standard
+target_compile_features(2dbeagle PRIVATE cxx_std_20)

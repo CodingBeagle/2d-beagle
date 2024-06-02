@@ -2,6 +2,19 @@
 # This sets the minimum required version of cmake for this project.
 cmake_minimum_required(VERSION 3.29)
 
+# Set the C++ language standard to be 20, and to be required
+# If the compiler on the platform does not support 20, then the CMAKE build will fail.
+set(CMAKE_CXX_STANDARD 20)
+set(CMAKE_CXX_STANDARD_REQUIRED ON)
+
+# Disable C++ compiler extensions. This is best practice.
+# Many compilers implement their own changes to the language, to enhance compability with other versions of the language
+# or for historical reasons. These compiler-specific behaviours are called "compiler extensions".
+# Writing programs that makes use of a compiler extension allows you to write programs that are incompatible with the C++ standard.
+# You can have code that is actually over-permissive, and won't work on other compilers, or may not run correctly.
+# Compiler extensions are often enabled by default.
+set(CMAKE_CXX_EXTENSIONS OFF)
+
 # Set the name for the project.
 # Also specifies that the supported language is C++
 project(2dbeagle LANGUAGES CXX)
@@ -24,6 +37,3 @@ target_include_directories(2dbeagle PRIVATE ${Vulkan_INCLUDE_DIRS})
 
 # Link against Vulkan libraries
 target_link_libraries(2dbeagle PRIVATE ${Vulkan_LIBRARIES})
-
-# Set C++ 20 as the required standard
-target_compile_features(2dbeagle PRIVATE cxx_std_20)

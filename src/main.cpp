@@ -1,6 +1,7 @@
 #include <Windows.h>
 #include <string>
 #include <iostream>
+#include <optional>
 
 #include <array>
 #include <vector>
@@ -12,7 +13,16 @@
 // Forward Decl
 LRESULT CALLBACK WindowProc(HWND hwnd, UINT uMsg, WPARAM wParam, LPARAM lParam);
 bool checkValidationLayerSupport();
-void setupDebugMessenger();
+VkDebugUtilsMessengerEXT setupDebugMessenger();
+void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& debugUtilsMessengerCreateInfo);
+void pickPhysicalDevice();
+bool isDeviceSuitable(VkPhysicalDevice device);
+
+struct QueueFamilyIndices {
+    // Index to queue supporting graphics operations
+    std::optional<uint32_t> graphicsFamily;
+};
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -38,6 +48,7 @@ void RedirectIOToConsole()
 }
 
 // Vulkan extension functions not part of the core Vulkan library that is statically linked, have to be loaded dynamically at runtime
+// You do this using the "vkGetInstanceProcAddr" function.
 VkResult CreateDebugUtilsMessengerEXT(VkInstance instance, const VkDebugUtilsMessengerCreateInfoEXT* pCreateInfo, const VkAllocationCallbacks* pAllocator, VkDebugUtilsMessengerEXT* pDebugMessenger) {
     auto func = (PFN_vkCreateDebugUtilsMessengerEXT) vkGetInstanceProcAddr(instance, "vkCreateDebugUtilsMessengerEXT");
     if (func != nullptr) {
@@ -55,6 +66,7 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 }
 
 VkInstance vkInstance;
+VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 
 // Windows Desktop Applications have a WinMain function as the entrypoint.
 int WINAPI WinMain(
@@ -120,10 +132,11 @@ int WINAPI WinMain(
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
-    // VK_EXT_DEBUG_UTILS_EXTENSION_NAME 
     std::array<const char*, 3> instanceExtensions = {
+        // Required extensions for the surface objects specific to Win32
         "VK_KHR_surface",
         "VK_KHR_win32_surface",
+        // Required extension for the debug messenger
         VK_EXT_DEBUG_UTILS_EXTENSION_NAME
     };
 
@@ -137,13 +150,20 @@ int WINAPI WinMain(
     instanceCreateInfo.ppEnabledExtensionNames = instanceExtensions.data();
     instanceCreateInfo.enabledLayerCount = 0;
 
+    // We enable debug messenger for the instance creation as well, by supplying create info to "pNext".
+    VkDebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfo;
+    populateDebugMessengerCreateInfo(debugUtilsMessengerCreateInfo);
+    instanceCreateInfo.pNext = (VkDebugUtilsMessengerCreateInfoEXT*) &debugUtilsMessengerCreateInfo;
+
     if (vkCreateInstance(&instanceCreateInfo, nullptr, &vkInstance) != VK_SUCCESS)
     {
         std::cout << "Failed to create Vulkan instance!" << std::endl;
         std::terminate();
     }
 
-    setupDebugMessenger();
+    VkDebugUtilsMessengerEXT debugMessenger = setupDebugMessenger();
+
+    pickPhysicalDevice();
 
     MSG msg = {};
     auto running = true;
@@ -164,7 +184,7 @@ int WINAPI WinMain(
     }
 
     // Vulkan Cleanup
-    DestroyDebugUtilsMessengerEXT(vkInstance, nullptr, nullptr);
+    DestroyDebugUtilsMessengerEXT(vkInstance, debugMessenger, nullptr);
     vkDestroyInstance(vkInstance, nullptr);
 
     // Wait for user to press a key before closing the application
@@ -175,6 +195,20 @@ int WINAPI WinMain(
     return 0;
 }
 
+std::string MessageSeverityToString(VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity) {
+    switch (messageSeverity) {
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_VERBOSE_BIT_EXT:
+            return "VERBOSE";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_INFO_BIT_EXT:
+            return "INFO";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_WARNING_BIT_EXT:
+            return "WARNING";
+        case VK_DEBUG_UTILS_MESSAGE_SEVERITY_ERROR_BIT_EXT:
+            return "ERROR";
+        default:
+            return "UNKNOWN";
+    }
+}
 
 static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallBack(
     VkDebugUtilsMessageSeverityFlagBitsEXT messageSeverity,
@@ -182,12 +216,14 @@ static VKAPI_ATTR VkBool32 VKAPI_CALL debugCallBack(
     const VkDebugUtilsMessengerCallbackDataEXT* pCallbackData,
     void* pUserData)
 {
-    std::cerr << "Validation layer: " << pCallbackData->pMessage << std::endl;
+    std::string messageSeverityString = MessageSeverityToString(messageSeverity);
+
+    std::cerr << "Debug Message: " << "{" << messageSeverityString << "}" << ": " << pCallbackData->pMessage << std::endl;
     return VK_FALSE;
 }
 
-void setupDebugMessenger() {
-    VkDebugUtilsMessengerCreateInfoEXT debugUtilsMessengerCreateInfo {};
+void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& debugUtilsMessengerCreateInfo) {
+    debugUtilsMessengerCreateInfo = {};
     debugUtilsMessengerCreateInfo.sType = VK_STRUCTURE_TYPE_DEBUG_UTILS_MESSENGER_CREATE_INFO_EXT;
 
     // Specify what message severities should be passed to the callback.
@@ -202,12 +238,89 @@ void setupDebugMessenger() {
 
     // Specify the callback function pointer.
     debugUtilsMessengerCreateInfo.pfnUserCallback = debugCallBack;
+}
 
+QueueFamilyIndices findQueueFamilies(VkPhysicalDevice physicalDevice) {
+    QueueFamilyIndices indices;
+
+    // We queue the number of available queue families on the physical device, so that we can retriece indices
+    // To specific queues that we need in order to submit work for things like rendering.
+    uint32_t queueFamilyCount = 0;
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
+
+    std::vector<VkQueueFamilyProperties> queueFamilies(queueFamilyCount);
+    vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, queueFamilies.data());
+
+    int i = 0;
+    for (const auto& queueFamily : queueFamilies) {
+        if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
+            indices.graphicsFamily = i;
+        }
+
+        i++;
+    }
+
+    return indices;
+}
+
+void pickPhysicalDevice()
+{
+    uint32_t deviceCount = 0;
+    vkEnumeratePhysicalDevices(vkInstance, &deviceCount, nullptr);
+
+    if (deviceCount == 0)
+    {
+        std::cout << "Failed to find GPUs with Vulkan support!" << std::endl;
+        std::terminate();
+    }
+
+    // vkEnumeratePhysicalDevices will return a list of physical devices that can be used by Vulkan.
+    // This is not necessarily a GPU, and also there a multiple types of GPUs that you might be interested in differentiating between.
+    // A physical device can be an integrated GPU, a discrete GPU (dedicated), a virtual GPU, or a CPU, or something else.
+    std::vector<VkPhysicalDevice> devices(deviceCount);
+    vkEnumeratePhysicalDevices(vkInstance, &deviceCount, devices.data());
+
+    for (const auto& device : devices)
+    {
+        if (isDeviceSuitable(device))
+        {
+            physicalDevice = device;
+            break;
+        }
+    }
+
+    if (physicalDevice == VK_NULL_HANDLE)
+    {
+        std::cout << "Failed to find a suitable GPU!" << std::endl;
+        std::terminate();
+    }
+}
+
+bool isDeviceSuitable(VkPhysicalDevice device)
+{
+    // In order to evaluate whether a physical device is suitable for what we want, we can query
+    // the properties of the device using vkGetPhysicalDeviceProperties.
+    VkPhysicalDeviceProperties physicalDeviceProperties {};
+    vkGetPhysicalDeviceProperties(device, &physicalDeviceProperties);
+
+    QueueFamilyIndices indices = findQueueFamilies(device);
+
+    return physicalDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
+        && indices.graphicsFamily.has_value();
+}
+
+VkDebugUtilsMessengerEXT setupDebugMessenger() {
+    VkDebugUtilsMessengerCreateInfoEXT createInfo {};
+    populateDebugMessengerCreateInfo(createInfo);
+
+    // Create the debug messenger
     VkDebugUtilsMessengerEXT debugMessenger;
-    if (!CreateDebugUtilsMessengerEXT(vkInstance, &debugUtilsMessengerCreateInfo, nullptr, &debugMessenger)) {
+    if (CreateDebugUtilsMessengerEXT(vkInstance, &createInfo, nullptr, &debugMessenger) != VK_SUCCESS) {
         std::cout << "Failed to set up debug messenger." << std::endl;
         std::terminate();
     }
+
+    return debugMessenger;
 }
 
 bool checkValidationLayerSupport() {

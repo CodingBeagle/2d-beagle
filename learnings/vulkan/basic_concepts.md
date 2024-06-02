@@ -14,3 +14,12 @@ In order for an application to be compiled to use WSI with a given platform, it 
 
 - #define the appropriate preprocessor symbol prior to including the vulkna.h header file or,
 - include vulkan_core.h and any native platform headers, followed by the appropriate platform-specific header.
+
+## Logical Device
+
+A logical device represents an interface to an underlying physical device.
+
+After having gotten a handle to a physical device, an application will need to create a logical device from it in order to work with it.
+
+## Queues & Queue Families
+

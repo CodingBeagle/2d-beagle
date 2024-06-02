@@ -5,6 +5,7 @@
 
 #include <array>
 #include <vector>
+#include <set>
 
 // In order to use the Win32 WSI extensions, we need to define VK_USE_PLATFORM_WIN32_KHR before including vulkan.h
 #define VK_USE_PLATFORM_WIN32_KHR
@@ -17,10 +18,16 @@ VkDebugUtilsMessengerEXT setupDebugMessenger();
 void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& debugUtilsMessengerCreateInfo);
 void pickPhysicalDevice();
 bool isDeviceSuitable(VkPhysicalDevice device);
+void createLogicalDevice();
 
 struct QueueFamilyIndices {
     // Index to queue supporting graphics operations
     std::optional<uint32_t> graphicsFamily;
+    std::optional<uint32_t> presentFamily;
+
+    bool isComplete() {
+        return graphicsFamily.has_value() && presentFamily.has_value();
+    }
 };
 QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
 
@@ -67,6 +74,12 @@ void DestroyDebugUtilsMessengerEXT(VkInstance instance, VkDebugUtilsMessengerEXT
 
 VkInstance vkInstance;
 VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
+VkDevice logicalDevice = VK_NULL_HANDLE;
+VkSurfaceKHR surface;
+
+// TODO: It is possible to have a single queue that simply supports both graphics and presentation. For now it's split up, but maybe combine them later.
+VkQueue graphicsQueue;
+VkQueue presentQueue;
 
 // Windows Desktop Applications have a WinMain function as the entrypoint.
 int WINAPI WinMain(
@@ -134,6 +147,7 @@ int WINAPI WinMain(
 
     std::array<const char*, 3> instanceExtensions = {
         // Required extensions for the surface objects specific to Win32
+        // We use these surface objects to render images to a window.
         "VK_KHR_surface",
         "VK_KHR_win32_surface",
         // Required extension for the debug messenger
@@ -163,7 +177,21 @@ int WINAPI WinMain(
 
     VkDebugUtilsMessengerEXT debugMessenger = setupDebugMessenger();
 
+    // Window surface creation needs to happen right after instance creation, because it can influence the physical device selection.
+    VkWin32SurfaceCreateInfoKHR VkWin32SurfaceCreateInfo {};
+    VkWin32SurfaceCreateInfo.sType = VK_STRUCTURE_TYPE_WIN32_SURFACE_CREATE_INFO_KHR;
+    VkWin32SurfaceCreateInfo.hwnd = hwnd;
+    VkWin32SurfaceCreateInfo.hinstance = hInstance;
+
+    // vkCreateWin32SurfaceKHR is technically an extension function, but because it is so commonly used
+    // the standard Vulkan loader includes it.
+    if (vkCreateWin32SurfaceKHR(vkInstance, &VkWin32SurfaceCreateInfo, nullptr, &surface) != VK_SUCCESS) {
+        std::cout << "Failed to create Win32 surface!" << std::endl;
+        std::terminate();
+    }
+
     pickPhysicalDevice();
+    createLogicalDevice();
 
     MSG msg = {};
     auto running = true;
@@ -184,7 +212,15 @@ int WINAPI WinMain(
     }
 
     // Vulkan Cleanup
-    DestroyDebugUtilsMessengerEXT(vkInstance, debugMessenger, nullptr);
+    vkDestroyDevice(logicalDevice, nullptr);
+
+    vkDestroySurfaceKHR(vkInstance, surface, nullptr);
+
+    // TODO: Investigate this further, I can't find any official explanation for this being true.
+    // It is important to destroy the debug messenger AFTER the logical device has been destroyed.
+    // This is because the logical device might be using the debug messenger, and destroying the debug messenger before the logical device
+    // can cause memory access violations.
+    DestroyDebugUtilsMessengerEXT(vkInstance, debugMessenger, nullptr);    
     vkDestroyInstance(vkInstance, nullptr);
 
     // Wait for user to press a key before closing the application
@@ -243,7 +279,7 @@ void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& debugU
 QueueFamilyIndices findQueueFamilies(VkPhysicalDevice physicalDevice) {
     QueueFamilyIndices indices;
 
-    // We queue the number of available queue families on the physical device, so that we can retriece indices
+    // We queue the number of available queue families on the physical device, so that we can retrieve indices
     // To specific queues that we need in order to submit work for things like rendering.
     uint32_t queueFamilyCount = 0;
     vkGetPhysicalDeviceQueueFamilyProperties(physicalDevice, &queueFamilyCount, nullptr);
@@ -255,6 +291,17 @@ QueueFamilyIndices findQueueFamilies(VkPhysicalDevice physicalDevice) {
     for (const auto& queueFamily : queueFamilies) {
         if (queueFamily.queueFlags & VK_QUEUE_GRAPHICS_BIT) {
             indices.graphicsFamily = i;
+        }
+
+        // We need to figure out whether the physical device supports presenting to the surface we created.
+        VkBool32 presentSupport = false;
+        vkGetPhysicalDeviceSurfaceSupportKHR(physicalDevice, i, surface, &presentSupport);
+        if (presentSupport) {
+            indices.presentFamily = i;
+        }
+
+        if (indices.isComplete()) {
+            break;
         }
 
         i++;
@@ -307,6 +354,56 @@ bool isDeviceSuitable(VkPhysicalDevice device)
 
     return physicalDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
         && indices.graphicsFamily.has_value();
+}
+
+void createLogicalDevice()
+{
+    QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+
+    std::vector<VkDeviceQueueCreateInfo> queueCreateInfos {};
+    std::set<uint32_t> uniqueQueueFamilies = { indices.graphicsFamily.value(), indices.presentFamily.value() };
+
+    float queuePriority = 1.0f;
+    for (uint32_t queueFamily : uniqueQueueFamilies)
+    {
+        // When creating a logical device, can can also supply information about the queue families we want to create queues for,
+        // and how many.
+        VkDeviceQueueCreateInfo queueCreateInfo {};
+        queueCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_QUEUE_CREATE_INFO;
+        queueCreateInfo.queueFamilyIndex = indices.graphicsFamily.value();
+        queueCreateInfo.queueCount = 1;
+        // We also have to specify the priority of the queue, which influences the scheduling of command buffer execution.
+        queueCreateInfo.pQueuePriorities = &queuePriority;
+        queueCreateInfos.push_back(queueCreateInfo);
+    }
+
+    // We also need to specify the device features we are interested in.
+    VkPhysicalDeviceFeatures deviceFeatures {};
+
+    // Now we can create the logical device
+    VkDeviceCreateInfo deviceCreateInfo {};
+    deviceCreateInfo.sType = VK_STRUCTURE_TYPE_DEVICE_CREATE_INFO;
+    deviceCreateInfo.pQueueCreateInfos = queueCreateInfos.data();
+    deviceCreateInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
+    deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
+
+    deviceCreateInfo.enabledExtensionCount = 0;
+
+    // Previous implementations of Vulkan made a distinction between instance and device specific validation layers.
+    // This is no longer the case however. And in up-to-date implementations, enabledLayerCount and ppEnabledLayerNames properties of a logical device are ignored.
+    // It is good, however, to still set them in order to be compatible with older implementations.
+    deviceCreateInfo.enabledLayerCount = static_cast<uint32_t>(validationLayers.size());
+    deviceCreateInfo.ppEnabledLayerNames = validationLayers.data();
+
+    if (vkCreateDevice(physicalDevice, &deviceCreateInfo, nullptr, &logicalDevice) != VK_SUCCESS)
+    {
+        std::cout << "Failed to create logical device!" << std::endl;
+        std::terminate();
+    }
+
+    // Queues are automatically created when the logical device is created.
+    vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0, &graphicsQueue);
+    vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
 }
 
 VkDebugUtilsMessengerEXT setupDebugMessenger() {

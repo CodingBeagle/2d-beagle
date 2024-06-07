@@ -15,6 +15,10 @@ In order for an application to be compiled to use WSI with a given platform, it 
 - #define the appropriate preprocessor symbol prior to including the vulkna.h header file or,
 - include vulkan_core.h and any native platform headers, followed by the appropriate platform-specific header.
 
+## Swap Chain
+
+A swap chain in a collection of presentable images that are used for rendering and display.
+
 ## Logical Device
 
 A logical device represents an interface to an underlying physical device.

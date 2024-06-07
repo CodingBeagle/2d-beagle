@@ -19,6 +19,7 @@ void populateDebugMessengerCreateInfo(VkDebugUtilsMessengerCreateInfoEXT& debugU
 void pickPhysicalDevice();
 bool isDeviceSuitable(VkPhysicalDevice device);
 void createLogicalDevice();
+bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 
 struct QueueFamilyIndices {
     // Index to queue supporting graphics operations
@@ -30,6 +31,14 @@ struct QueueFamilyIndices {
     }
 };
 QueueFamilyIndices findQueueFamilies(VkPhysicalDevice device);
+
+struct SwapChainSupportDetails {
+    VkSurfaceCapabilitiesKHR capabilities;
+    std::vector<VkSurfaceFormatKHR> formats;
+    std::vector<VkPresentModeKHR> presentModes;
+};
+
+SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device);
 
 const std::vector<const char*> validationLayers = {
     "VK_LAYER_KHRONOS_validation"
@@ -76,6 +85,16 @@ VkInstance vkInstance;
 VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 VkDevice logicalDevice = VK_NULL_HANDLE;
 VkSurfaceKHR surface;
+
+// Device extensions extend the capabilities of a specific Vulkan device (like a GPU)
+// These extensions affect the device and its operations, like providing additional features for rendering
+// compute, or memory management.
+std::array<const char*, 1> deviceExtensions = {
+    // In order to present rendering results to a surface, we need a swapchain.
+    // This is also not part of the Vulkan core, and so can be found in the "VK_KHR_swapchain" extension.
+    // This extension introduces the VkSwapchainKHR objects, which provides the ability to present rendering results to a surface.
+    VK_KHR_SWAPCHAIN_EXTENSION_NAME
+};
 
 // TODO: It is possible to have a single queue that simply supports both graphics and presentation. For now it's split up, but maybe combine them later.
 VkQueue graphicsQueue;
@@ -145,6 +164,8 @@ int WINAPI WinMain(
     appInfo.engineVersion = VK_MAKE_VERSION(1, 0, 0);
     appInfo.apiVersion = VK_API_VERSION_1_0;
 
+    // Instance extensions are extensions that affect the Vulkan instance itself, rather than a specific device.
+    // They extend the capabilities of the Vulkan instance itself, and affect the entire application.
     std::array<const char*, 3> instanceExtensions = {
         // Required extensions for the surface objects specific to Win32
         // We use these surface objects to render images to a window.
@@ -352,8 +373,34 @@ bool isDeviceSuitable(VkPhysicalDevice device)
 
     QueueFamilyIndices indices = findQueueFamilies(device);
 
+    bool extensionsSupported = checkDeviceExtensionSupport(device);
+
+    bool swapChainAdequate = false;
+    if (extensionsSupported) {
+        SwapChainSupportDetails swapChainSupport = querySwapChainSupport(device);
+        swapChainAdequate = !swapChainSupport.formats.empty() && !swapChainSupport.presentModes.empty();
+    }
+
     return physicalDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
-        && indices.graphicsFamily.has_value();
+        && indices.isComplete() && extensionsSupported && swapChainAdequate;
+}
+
+bool checkDeviceExtensionSupport(VkPhysicalDevice device)
+{
+    uint32_t extensionCount;
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, nullptr);
+
+    std::vector<VkExtensionProperties> availableExtensions(extensionCount);
+    vkEnumerateDeviceExtensionProperties(device, nullptr, &extensionCount, availableExtensions.data());
+
+    std::set<std::string> requiredExtensions(deviceExtensions.begin(), deviceExtensions.end());
+
+    for (const auto& extension : availableExtensions)
+    {
+        requiredExtensions.erase(extension.extensionName);
+    }
+
+    return requiredExtensions.empty();
 }
 
 void createLogicalDevice()
@@ -387,7 +434,9 @@ void createLogicalDevice()
     deviceCreateInfo.queueCreateInfoCount = static_cast<uint32_t>(queueCreateInfos.size());
     deviceCreateInfo.pEnabledFeatures = &deviceFeatures;
 
-    deviceCreateInfo.enabledExtensionCount = 0;
+    // Enable device extensions.
+    deviceCreateInfo.enabledExtensionCount = static_cast<uint32_t>(deviceExtensions.size());
+    deviceCreateInfo.ppEnabledExtensionNames = deviceExtensions.data();
 
     // Previous implementations of Vulkan made a distinction between instance and device specific validation layers.
     // This is no longer the case however. And in up-to-date implementations, enabledLayerCount and ppEnabledLayerNames properties of a logical device are ignored.
@@ -404,6 +453,109 @@ void createLogicalDevice()
     // Queues are automatically created when the logical device is created.
     vkGetDeviceQueue(logicalDevice, indices.graphicsFamily.value(), 0, &graphicsQueue);
     vkGetDeviceQueue(logicalDevice, indices.presentFamily.value(), 0, &presentQueue);
+}
+
+VkSurfaceFormatKHR chooseSwapSurfaceFormat(const std::vector<VkSurfaceFormatKHR>& availableFormats)
+{
+    // In order to set up a swapchain, it's crucial to choose a suitable surface format.
+    // Surface formats define how the pixels of images presented to the screen are stored and processed.
+    // A VkSurfaceFormatKHR consists of a format and a colorSpace member.
+    // The vkFormat struct specifies the actual format of the image data. This includes things like the number of
+    // bits used for each color channel and the arrangement of the channels (like RGBA or BGRA)
+    // The VkColorSpaceKHR member defines how the color values should be interpreted in terms of color space.
+    // A color space indicates the range and characteristics of colors that can be represented.
+    // TODO: Read more up on color spaces and how they work.
+    for (const auto& availableFormat : availableFormats)
+    {
+        if (availableFormat.format == VK_FORMAT_B8G8R8A8_SRGB && availableFormat.colorSpace == VK_COLOR_SPACE_SRGB_NONLINEAR_KHR)
+        {
+            return availableFormat;
+        }
+    }
+
+    return availableFormats[0];
+}
+
+// The presentation mode represents the actual conditions for showing images to the screen.
+// VK_PRESENT_MODE_IMMEDIATE_KHR: 
+// - Images submitted by your application are transferred to the screen right away, which may result in tearing.
+// VK_PRESENT_MODE_FIFO_KHR: 
+// - The swapchain is a queue where the display takes an image from the front of the queue. This "taking" is synchronized with the display's vertical blanking interval (VBI).
+// - This ensures that tearing does not occur.
+// - If the queue is full, the application must wait before submitting a new image.
+// - If the queue is empty during a VBI, the display will keep showing the latest image available until a new image is available in the queue.
+// VK_PRESENT_MODE_FIFO_RELAXED_KHR:
+// - Like VK_PRESENT_MODE_FIFO, but if the application is late and the queue was empty at the last vertical blank, instead of waiting for the next vertical blank, the image is
+// - transferred right away when it finally arrives. This may result in visible tearing.
+// VK_PRESENT_MODE_MAILBOX_KHR:
+// - Instead of blocking the application when the queue is full, the images that are already queued are simply replaced with the newer ones.
+// - This mode can be used to render frames as fast as possible while still avoiding tearing, result in fewer latency issues than standard vertical sync.
+// - Commonly known as "triple buffering", although the existence of three buffers alone does not necessarily mean that the framerate is unlocked.
+VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& availablePresentModes)
+{
+    // VK_PRESENT_MODE_MAILBOX_KHR is a nice trade-off if energy usage is not a concern.
+    // It allows us to avoid tearing while still maintaining a fairly low latency by rendering new images that are as up-to-date as possible right until the vertical blank.
+    for (const auto& availablePresentMode : availablePresentModes)
+    {
+        if (availablePresentMode == VK_PRESENT_MODE_MAILBOX_KHR)
+        {
+            std::cout << "Chose VK_PRESENT_MODE_MAILBOX_KHR" << std::endl;
+            return availablePresentMode;
+        }
+    }
+
+    // VK_PRESENT_MODE_FIFO_KHR mode is guarenteed to be available.
+    return VK_PRESENT_MODE_FIFO_KHR;
+}
+
+// VkSurfaceCapabilitiesKHR specifies the capabilities of the surface.
+// When "currentExtent" is not '0xFFFFFFFF', the surface size will match the window size in pixels. The swapchain created for the surface must use images of this extent.
+// When "currentExtent" is '0xFFFFFFFF', the application can choose the extent within the bounds specified by "minImageExtent" and "maxImageExtent".
+VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
+{
+    if (capabilities.currentExtent.width != UINT32_MAX)
+    {
+        return capabilities.currentExtent;
+    }
+
+    std::cout << "Failed to choose swap extent!" << std::endl;
+    std::terminate();
+}
+
+void createSwapChain()
+{
+    SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
+
+    VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+}
+
+SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device)
+{
+    SwapChainSupportDetails details {};
+
+    uint32_t formatCount;
+    vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, nullptr);
+
+    if (formatCount != 0) {
+        details.formats.resize(formatCount);
+        vkGetPhysicalDeviceSurfaceFormatsKHR(device, surface, &formatCount, details.formats.data());
+    }
+
+    // VkPresentModeKHR describes the modes available for presenting images to the surface.
+    // The mode determines the behaviour of the swapchain in regard to how images are presented
+    // and synchronized with the display.
+    uint32_t presentModeCount;
+    vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, nullptr);
+
+    if (presentModeCount != 0) {
+        details.presentModes.resize(presentModeCount);
+        vkGetPhysicalDeviceSurfacePresentModesKHR(device, surface, &presentModeCount, details.presentModes.data());
+    }
+
+    VkSurfaceCapabilitiesKHR surfaceCapabilities {};
+    vkGetPhysicalDeviceSurfaceCapabilitiesKHR(device, surface, &surfaceCapabilities);
+
+    return details;
 }
 
 VkDebugUtilsMessengerEXT setupDebugMessenger() {

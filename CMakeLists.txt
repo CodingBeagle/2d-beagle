@@ -7,6 +7,9 @@ cmake_minimum_required(VERSION 3.29)
 set(CMAKE_CXX_STANDARD 20)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# Set environment variable for all targets
+set(ENV{DISABLE_VK_LAYER_VALVE_steam_overlay_1} "1")
+
 # Disable C++ compiler extensions. This is best practice.
 # Many compilers implement their own changes to the language, to enhance compability with other versions of the language
 # or for historical reasons. These compiler-specific behaviours are called "compiler extensions".

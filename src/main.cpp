@@ -20,6 +20,7 @@ void pickPhysicalDevice();
 bool isDeviceSuitable(VkPhysicalDevice device);
 void createLogicalDevice();
 bool checkDeviceExtensionSupport(VkPhysicalDevice device);
+void createSwapChain();
 
 struct QueueFamilyIndices {
     // Index to queue supporting graphics operations
@@ -85,6 +86,7 @@ VkInstance vkInstance;
 VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 VkDevice logicalDevice = VK_NULL_HANDLE;
 VkSurfaceKHR surface;
+VkSwapchainKHR swapChain;
 
 // Device extensions extend the capabilities of a specific Vulkan device (like a GPU)
 // These extensions affect the device and its operations, like providing additional features for rendering
@@ -213,6 +215,7 @@ int WINAPI WinMain(
 
     pickPhysicalDevice();
     createLogicalDevice();
+    createSwapChain();
 
     MSG msg = {};
     auto running = true;
@@ -233,6 +236,10 @@ int WINAPI WinMain(
     }
 
     // Vulkan Cleanup
+
+    // The swapchain should be destroyed before the logical device is destroyed.
+    vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
+
     vkDestroyDevice(logicalDevice, nullptr);
 
     vkDestroySurfaceKHR(vkInstance, surface, nullptr);
@@ -384,7 +391,7 @@ bool isDeviceSuitable(VkPhysicalDevice device)
     return physicalDeviceProperties.deviceType == VK_PHYSICAL_DEVICE_TYPE_DISCRETE_GPU 
         && indices.isComplete() && extensionsSupported && swapChainAdequate;
 }
-
+    
 bool checkDeviceExtensionSupport(VkPhysicalDevice device)
 {
     uint32_t extensionCount;
@@ -511,6 +518,7 @@ VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& avai
 // VkSurfaceCapabilitiesKHR specifies the capabilities of the surface.
 // When "currentExtent" is not '0xFFFFFFFF', the surface size will match the window size in pixels. The swapchain created for the surface must use images of this extent.
 // When "currentExtent" is '0xFFFFFFFF', the application can choose the extent within the bounds specified by "minImageExtent" and "maxImageExtent".
+// A VkExtend2D is essentially just a struct defining a width and height. A two dimensional extent. It's the context of it that matters.
 VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
 {
     if (capabilities.currentExtent.width != UINT32_MAX)
@@ -527,6 +535,77 @@ void createSwapChain()
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+    VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+    VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+
+    // We have to decide how many imagines we would like to have in the swap chain.
+    // It is recommended to request at least on more image than the minimum.
+    // TODO: Read up on why this is the case later.
+    uint32_t imageCount = swapChainSupport.capabilities.minImageCount + 1;
+
+    // We make sure not to exceed the maximum number of images that the swap chain supports.
+    // A "maxImageCount" of 0 means that there is no maximum.
+    if (swapChainSupport.capabilities.maxImageCount > 0 && imageCount > swapChainSupport.capabilities.maxImageCount)
+    {
+        imageCount = swapChainSupport.capabilities.maxImageCount;
+    }
+
+    VkSwapchainCreateInfoKHR swapChainCreateInfo {};
+    swapChainCreateInfo.sType = VK_STRUCTURE_TYPE_SWAPCHAIN_CREATE_INFO_KHR;
+
+    swapChainCreateInfo.minImageCount = imageCount;
+    swapChainCreateInfo.surface = surface;
+    swapChainCreateInfo.imageFormat = surfaceFormat.format;
+    swapChainCreateInfo.imageColorSpace = surfaceFormat.colorSpace;
+    swapChainCreateInfo.imageExtent = extent;
+
+    // Specifies the amount of layers each image consist of. This is always 1 unless you are developing a stereoscopic 3D application.
+    swapChainCreateInfo.imageArrayLayers = 1;
+    
+    // ImageUsage bit specifies what kind of operations we'll use the images in the swap chain for.
+    // For now we render directly to them, which means that they're used as color attachment.
+    swapChainCreateInfo.imageUsage = VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT;
+
+    QueueFamilyIndices indices = findQueueFamilies(physicalDevice);
+    std::array<uint32_t, 2> queueFamilyIndices { indices.graphicsFamily.value(), indices.presentFamily.value() };
+
+    if (indices.graphicsFamily != indices.presentFamily)
+    {
+        swapChainCreateInfo.imageSharingMode = VK_SHARING_MODE_CONCURRENT;
+        swapChainCreateInfo.queueFamilyIndexCount = 2;
+        swapChainCreateInfo.pQueueFamilyIndices = queueFamilyIndices.data();
+    } else {
+        swapChainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
+        swapChainCreateInfo.queueFamilyIndexCount = 0;
+        swapChainCreateInfo.pQueueFamilyIndices = nullptr;
+    }
+
+    // You can specify that a certain transform should be applied to the images in the swap chain if it is supported.
+    // Like a 90 degree clockwise rotation or horizontal flip.
+    // To specify that you do not want any transformation, simply specify the current transformation.
+    swapChainCreateInfo.preTransform = swapChainSupport.capabilities.currentTransform;
+
+    // The compositeAlpha field specifies if the alpha channel should be used for blending with other windows in the window system.
+    // You'll almost always want to simply ignore the alpha channel.
+    swapChainCreateInfo.compositeAlpha = VK_COMPOSITE_ALPHA_OPAQUE_BIT_KHR;
+
+    // If the "clipped" member is set to true, then that means that we don't care about the color of pixels that are obscured.
+    // For example, because another window is in front of them.
+    // Unless you really need to be able to read these pixels back and get predictable results, you'll get the best performance by enabling clipping.
+    swapChainCreateInfo.presentMode = presentMode;
+    swapChainCreateInfo.clipped = VK_TRUE;
+
+    // With Vulkan it is possible that your swap chain becomes invalid or unoptimized while your application is running.
+    // This can be, for example, because the window is resized.
+    // In that case, the swap chain actually needs to be recreated from scratch and a reference to the old one must be specified in this field.
+    // TODO: We ignore oldSwapChain for now.
+    swapChainCreateInfo.oldSwapchain = VK_NULL_HANDLE;
+
+    if (vkCreateSwapchainKHR(logicalDevice, &swapChainCreateInfo, nullptr, &swapChain) != VK_SUCCESS)
+    {
+        std::cout << "Failed to create swap chain!" << std::endl;
+        std::terminate();
+    }
 }
 
 SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device)

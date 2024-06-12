@@ -21,6 +21,8 @@ bool isDeviceSuitable(VkPhysicalDevice device);
 void createLogicalDevice();
 bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 void createSwapChain();
+void createImageViews();
+void createGraphicsPipeline();
 
 struct QueueFamilyIndices {
     // Index to queue supporting graphics operations
@@ -87,6 +89,10 @@ VkPhysicalDevice physicalDevice = VK_NULL_HANDLE;
 VkDevice logicalDevice = VK_NULL_HANDLE;
 VkSurfaceKHR surface;
 VkSwapchainKHR swapChain;
+std::vector<VkImage> swapChainImages;
+VkFormat swapChainImageFormat;
+VkExtent2D swapChainExtent;
+std::vector<VkImageView> swapChainImageViews;
 
 // Device extensions extend the capabilities of a specific Vulkan device (like a GPU)
 // These extensions affect the device and its operations, like providing additional features for rendering
@@ -216,6 +222,7 @@ int WINAPI WinMain(
     pickPhysicalDevice();
     createLogicalDevice();
     createSwapChain();
+    createImageViews();    
 
     MSG msg = {};
     auto running = true;
@@ -239,6 +246,10 @@ int WINAPI WinMain(
 
     // The swapchain should be destroyed before the logical device is destroyed.
     vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
+
+    for (auto imageView : swapChainImageViews) {
+        vkDestroyImageView(logicalDevice, imageView, nullptr);
+    }
 
     vkDestroyDevice(logicalDevice, nullptr);
 
@@ -535,8 +546,12 @@ void createSwapChain()
     SwapChainSupportDetails swapChainSupport = querySwapChainSupport(physicalDevice);
 
     VkSurfaceFormatKHR surfaceFormat = chooseSwapSurfaceFormat(swapChainSupport.formats);
+    swapChainImageFormat = surfaceFormat.format;
+
     VkPresentModeKHR presentMode = chooseSwapPresentMode(swapChainSupport.presentModes);
+
     VkExtent2D extent = chooseSwapExtent(swapChainSupport.capabilities);
+    swapChainExtent = extent;
 
     // We have to decide how many imagines we would like to have in the swap chain.
     // It is recommended to request at least on more image than the minimum.
@@ -606,6 +621,55 @@ void createSwapChain()
         std::cout << "Failed to create swap chain!" << std::endl;
         std::terminate();
     }
+
+    // The actual images are created by the implementation for the swap chain, and will be automatically cleaned up once the swap chain
+    // has been destroyed.
+    vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, nullptr);
+
+    // The implementation is allowed to create more images than the minimum we specified,
+    // So we have to query how many images were actually created.
+    swapChainImages.resize(imageCount);
+
+    vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
+}
+
+void createImageViews()
+{
+    // Resize image views to the same amount as swap chain images.
+    swapChainImageViews.resize(swapChainImages.size());
+
+    for (size_t i = 0; i < swapChainImages.size(); i++)
+    {
+        VkImageViewCreateInfo imageViewCreateInfo {};
+        imageViewCreateInfo.sType = VK_STRUCTURE_TYPE_IMAGE_VIEW_CREATE_INFO;
+        imageViewCreateInfo.image = swapChainImages[i];
+        
+        // #TODO: Read up on image view types. Specifically, what does it really mean for something to be a 2D or 3D texture?
+        imageViewCreateInfo.viewType = VK_IMAGE_VIEW_TYPE_2D;
+        imageViewCreateInfo.format = swapChainImageFormat;
+
+        // #TODO: Read up on this swizzle magic
+        imageViewCreateInfo.components.r = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.g = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.b = VK_COMPONENT_SWIZZLE_IDENTITY;
+        imageViewCreateInfo.components.a = VK_COMPONENT_SWIZZLE_IDENTITY;
+
+        // Our image views will deal with the color aspect of the images,
+        // hence, VK_IMAGE_ASPECT_COLOR_BIT
+        imageViewCreateInfo.subresourceRange.aspectMask = VK_IMAGE_ASPECT_COLOR_BIT;
+
+        // We don't use multiple mipmap levels in this view, hence a level count of 1 and a base mip level of 0 (the first level)
+        imageViewCreateInfo.subresourceRange.baseMipLevel = 0;
+        imageViewCreateInfo.subresourceRange.levelCount = 1;
+        imageViewCreateInfo.subresourceRange.baseArrayLayer = 0;
+        imageViewCreateInfo.subresourceRange.layerCount = 1;
+
+        if (vkCreateImageView(logicalDevice, &imageViewCreateInfo, nullptr, &swapChainImageViews[i]) != VK_SUCCESS)
+        {
+            std::cout << "Failed to create image views!" << std::endl;
+            std::terminate();
+        }
+    }
 }
 
 SwapChainSupportDetails querySwapChainSupport(VkPhysicalDevice device)
@@ -649,6 +713,10 @@ VkDebugUtilsMessengerEXT setupDebugMessenger() {
     }
 
     return debugMessenger;
+}
+
+void createGraphicsPipeline() {
+    
 }
 
 bool checkValidationLayerSupport() {

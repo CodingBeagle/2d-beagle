@@ -7,6 +7,8 @@
 #include <vector>
 #include <set>
 
+#include "filehelper.h"
+
 // In order to use the Win32 WSI extensions, we need to define VK_USE_PLATFORM_WIN32_KHR before including vulkan.h
 #define VK_USE_PLATFORM_WIN32_KHR
 #include <vulkan/vulkan.h>
@@ -23,6 +25,7 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 void createSwapChain();
 void createImageViews();
 void createGraphicsPipeline();
+VkShaderModule createShaderModule(const std::vector<char>& code);
 
 struct QueueFamilyIndices {
     // Index to queue supporting graphics operations
@@ -222,7 +225,8 @@ int WINAPI WinMain(
     pickPhysicalDevice();
     createLogicalDevice();
     createSwapChain();
-    createImageViews();    
+    createImageViews();
+    createGraphicsPipeline();
 
     MSG msg = {};
     auto running = true;
@@ -716,7 +720,51 @@ VkDebugUtilsMessengerEXT setupDebugMessenger() {
 }
 
 void createGraphicsPipeline() {
-    
+    auto vertShaderCode = readFile("shaders/vert.spv");
+    auto fragShaderCode = readFile("shaders/frag.spv");
+
+    VkShaderModule vertShaderModule = createShaderModule(vertShaderCode);
+    VkShaderModule fragShaderModule = createShaderModule(fragShaderCode);
+
+    // Create a vertex shader stage
+    // Using the vertex shader module we created.
+    // pName specifies the function to invoke in our shader (entrypoint), in this case "main".
+    VkPipelineShaderStageCreateInfo vertShaderStageInfo {};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_VERTEX_BIT;
+    vertShaderStageInfo.module = vertShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    // Create a fragment shader stage
+    // Using the fragment shader module we created.
+    VkPipelineShaderStageCreateInfo fragShaderStageInfo {};
+    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    vertShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    vertShaderStageInfo.module = fragShaderModule;
+    vertShaderStageInfo.pName = "main";
+
+    VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
+
+    vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
+    vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
+}
+
+VkShaderModule createShaderModule(const std::vector<char>& code) {
+    VkShaderModuleCreateInfo shaderModuleCreateInfo {};
+    shaderModuleCreateInfo.sType = VK_STRUCTURE_TYPE_SHADER_MODULE_CREATE_INFO;
+    shaderModuleCreateInfo.codeSize = code.size();
+    // TODO: Read up on reinterpret_cast and the alignment of data. And how std::vector apparently guarantees alignment in worst case alignment requirements.
+    // Notice: pCode is a pointer to an array of 32-bit words, but the data is a char array.
+    shaderModuleCreateInfo.pCode = reinterpret_cast<const uint32_t*>(code.data());
+
+    // vkShaderModules are simply thin wrappers around the SPIR-V bytecode, and a VkShaderModule is nothing but a handle to that bytecode.
+    VkShaderModule shaderModule;
+    if (vkCreateShaderModule(logicalDevice, &shaderModuleCreateInfo, nullptr, &shaderModule) != VK_SUCCESS) {
+        std::cout << "Failed to create shader module." << std::endl;
+        std::terminate();
+    }
+
+    return shaderModule;
 }
 
 bool checkValidationLayerSupport() {

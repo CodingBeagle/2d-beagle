@@ -26,7 +26,10 @@ project(2dbeagle LANGUAGES CXX)
 # A target corresponds to an executable or a library.
 # I specify WIN32 in order to create a WIN32 executable, which means that the application entry point becomes WinMain, instead of main.
 # This is essentially the SUBSYSTEM linker option of MSVC.
-add_executable(2dbeagle WIN32 src/main.cpp)
+add_executable(2dbeagle WIN32 src/main.cpp src/filehelper.cpp)
+
+# Add include directories from "headers" directory
+target_include_directories(2dbeagle PRIVATE ${CMAKE_CURRENT_SOURCE_DIR}/headers)
 
 # Add vulkan library
 # This uses the Module mode of find_pckage to find the Vulkan package on the system.

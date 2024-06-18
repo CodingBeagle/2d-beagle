@@ -745,6 +745,86 @@ void createGraphicsPipeline() {
 
     VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
+    // Describe vertex input
+    VkPipelineVertexInputStateCreateInfo vertexInputStateCreateInfo {};
+    vertexInputStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VERTEX_INPUT_STATE_CREATE_INFO;
+
+    // Describe input assembly
+    // VkPipelineInputAssemblyStateCreateInfo describes two things:
+    // What kind of geometry will be drawn from the vertices, and if primitive restart should be enabled.
+    // We intend to draw triangles
+    VkPipelineInputAssemblyStateCreateInfo inputAssemblyStateCreateInfo {};
+    inputAssemblyStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_INPUT_ASSEMBLY_STATE_CREATE_INFO;
+    // VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST means a triangle from every 3 vertices without reuse.
+    inputAssemblyStateCreateInfo.topology = VK_PRIMITIVE_TOPOLOGY_TRIANGLE_LIST;
+    inputAssemblyStateCreateInfo.primitiveRestartEnable = VK_FALSE;
+
+    // Describe the viewport.
+    // The viewport describes the region of the framebuffer that the output will be rendered to.
+    // This will almost always be (0, 0) to (width, height).
+    VkViewport viewport {};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float) swapChainExtent.width;
+    viewport.height = (float) swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+
+    // The scissor rectangle defines in which regions pixels will actually be stored.
+    // Anything outside of this rectanble will be discarded by the rasterizer.
+    // For now, I just create it to be the same size as the viewport.
+    VkRect2D scissor {};
+    scissor.offset = { 0, 0 };
+    scissor.extent = swapChainExtent;
+
+    VkPipelineViewportStateCreateInfo viewportStateCreateInfo {};
+    viewportStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_VIEWPORT_STATE_CREATE_INFO;
+    viewportStateCreateInfo.viewportCount = 1;
+    viewportStateCreateInfo.pViewports = &viewport;
+    viewportStateCreateInfo.scissorCount = 1;
+    viewportStateCreateInfo.pScissors = &scissor;
+
+    // Describe the Rasterizer stage
+    // The rasterizer takes the geometry that is shaped by the vertices from the vertex shader and turns it into fragments.
+    // The fragments will then be colored, depth tested, and face culled in the fragment shader.
+    VkPipelineRasterizationStateCreateInfo rasterizationStateCreateInfo {};
+    rasterizationStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_RASTERIZATION_STATE_CREATE_INFO;
+    rasterizationStateCreateInfo.depthClampEnable = VK_FALSE;
+    rasterizationStateCreateInfo.rasterizerDiscardEnable = VK_FALSE;
+
+    // polygonMode determines how fragments are generated for geometry.
+    // VK_POLYGON_MODE_FILL = Fill the area of the polygon with fragments.
+    rasterizationStateCreateInfo.polygonMode = VK_POLYGON_MODE_FILL;
+    rasterizationStateCreateInfo.lineWidth = 1.0f;
+
+    // Culling refers to the process of discarding triangles during rendering, based on their orientation to the camera.
+    // VK_CULL_MODE_BACK_BIT = Triangles that are back-facing will be discarded.
+    rasterizationStateCreateInfo.cullMode = VK_CULL_MODE_BACK_BIT;
+    // frontFace determines that order of vertices that determines the front.
+    rasterizationStateCreateInfo.frontFace = VK_FRONT_FACE_CLOCKWISE;
+
+    // TODO: Read up on what behaviour all these settings alter
+    rasterizationStateCreateInfo.depthBiasEnable = VK_FALSE;
+    rasterizationStateCreateInfo.depthBiasConstantFactor = 0.0f;
+    rasterizationStateCreateInfo.depthBiasClamp = 0.0f;
+    rasterizationStateCreateInfo.depthBiasSlopeFactor = 0.0f;
+
+    // VkPipelineMultisampleStateCreateInfo configures multisamlping, a type of anti-aliasing.
+    // We disable it for now, as enabling it requires enabling a GPU feature.
+    VkPipelineMultisampleStateCreateInfo multisamplingStateCreateInfo {};
+    multisamplingStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_MULTISAMPLE_STATE_CREATE_INFO;
+    multisamplingStateCreateInfo.sampleShadingEnable = VK_FALSE;
+    multisamplingStateCreateInfo.rasterizationSamples = VK_SAMPLE_COUNT_1_BIT;
+    multisamplingStateCreateInfo.minSampleShading = 1.0f;
+    multisamplingStateCreateInfo.pSampleMask = nullptr;
+    multisamplingStateCreateInfo.alphaToCoverageEnable = VK_FALSE;
+    multisamplingStateCreateInfo.alphaToOneEnable = VK_FALSE;
+
+    // Configure color blending.
+    // Color blending is the process of combining the color of a fragment that is being written with the color that is already in the framebuffer.
+    VkPipelineColorBlendAttachmentState colorBlendAttachment{};
+    colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+
     vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
     vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
 }

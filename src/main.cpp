@@ -25,6 +25,7 @@ bool checkDeviceExtensionSupport(VkPhysicalDevice device);
 void createSwapChain();
 void createImageViews();
 void createGraphicsPipeline();
+void createRenderPass();
 VkShaderModule createShaderModule(const std::vector<char>& code);
 
 struct QueueFamilyIndices {
@@ -96,6 +97,9 @@ std::vector<VkImage> swapChainImages;
 VkFormat swapChainImageFormat;
 VkExtent2D swapChainExtent;
 std::vector<VkImageView> swapChainImageViews;
+VkPipelineLayout pipelineLayout;
+VkRenderPass renderPass;
+VkPipeline graphicsPipeline;
 
 // Device extensions extend the capabilities of a specific Vulkan device (like a GPU)
 // These extensions affect the device and its operations, like providing additional features for rendering
@@ -227,6 +231,7 @@ int WINAPI WinMain(
     createSwapChain();
     createImageViews();
     createGraphicsPipeline();
+    createRenderPass();
 
     MSG msg = {};
     auto running = true;
@@ -247,6 +252,15 @@ int WINAPI WinMain(
     }
 
     // Vulkan Cleanup
+
+    // Destroy pipeline
+    vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
+
+    // Destroy pipeline layouts
+    vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
+
+    // Destroy render pass
+    vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
 
     // The swapchain should be destroyed before the logical device is destroyed.
     vkDestroySwapchainKHR(logicalDevice, swapChain, nullptr);
@@ -738,10 +752,10 @@ void createGraphicsPipeline() {
     // Create a fragment shader stage
     // Using the fragment shader module we created.
     VkPipelineShaderStageCreateInfo fragShaderStageInfo {};
-    vertShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
-    vertShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
-    vertShaderStageInfo.module = fragShaderModule;
-    vertShaderStageInfo.pName = "main";
+    fragShaderStageInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_SHADER_STAGE_CREATE_INFO;
+    fragShaderStageInfo.stage = VK_SHADER_STAGE_FRAGMENT_BIT;
+    fragShaderStageInfo.module = fragShaderModule;
+    fragShaderStageInfo.pName = "main";
 
     VkPipelineShaderStageCreateInfo shaderStages[] = { vertShaderStageInfo, fragShaderStageInfo };
 
@@ -824,9 +838,126 @@ void createGraphicsPipeline() {
     // Color blending is the process of combining the color of a fragment that is being written with the color that is already in the framebuffer.
     VkPipelineColorBlendAttachmentState colorBlendAttachment{};
     colorBlendAttachment.colorWriteMask = VK_COLOR_COMPONENT_R_BIT | VK_COLOR_COMPONENT_G_BIT | VK_COLOR_COMPONENT_B_BIT | VK_COLOR_COMPONENT_A_BIT;
+    colorBlendAttachment.blendEnable = VK_FALSE;
+
+    // VkPiplineColorBlendStateCreateInfo contains the configuration for the entire pipeline's color blending state.
+    // This configuration with the above color blend attachment represents a configuration in where the color from the fragment shader
+    // will be written to the framebuffer in an unmodified way, regardless of the existing color on the framebuffer.
+    VkPipelineColorBlendStateCreateInfo colorBlendingStateCreateInfo {};
+    colorBlendingStateCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_COLOR_BLEND_STATE_CREATE_INFO;
+    colorBlendingStateCreateInfo.logicOpEnable = VK_FALSE;
+    colorBlendingStateCreateInfo.logicOp = VK_LOGIC_OP_COPY;
+    colorBlendingStateCreateInfo.attachmentCount = 1;
+    colorBlendingStateCreateInfo.pAttachments = &colorBlendAttachment;
+    colorBlendingStateCreateInfo.blendConstants[0] = 0.0f;
+
+    // Uniform values in Shaders needs to be specified during pipeline creation through VkPipelineLayout objects.
+    // Currently I don't use uniform values, but it is required to create an empty VkPipelineLayout object at minimum.
+    VkPipelineLayoutCreateInfo pipelineLayoutCreateInfo {};
+    pipelineLayoutCreateInfo.sType = VK_STRUCTURE_TYPE_PIPELINE_LAYOUT_CREATE_INFO;
+    pipelineLayoutCreateInfo.setLayoutCount = 0;
+    pipelineLayoutCreateInfo.pSetLayouts = nullptr;
+    pipelineLayoutCreateInfo.pushConstantRangeCount = 0;
+    pipelineLayoutCreateInfo.pPushConstantRanges = nullptr;
+
+    if (vkCreatePipelineLayout(logicalDevice, &pipelineLayoutCreateInfo, nullptr, &pipelineLayout) != VK_SUCCESS) {
+        std::cout << "Failed to create pipeline layout." << std::endl;
+        std::terminate();
+    }
+
+    VkGraphicsPipelineCreateInfo pipelineCreateInfo {};
+    pipelineCreateInfo.sType = VK_STRUCTURE_TYPE_GRAPHICS_PIPELINE_CREATE_INFO;
+    pipelineCreateInfo.stageCount = 2;
+    pipelineCreateInfo.pStages = shaderStages;
+
+    pipelineCreateInfo.pVertexInputState = &vertexInputStateCreateInfo;
+    pipelineCreateInfo.pInputAssemblyState = &inputAssemblyStateCreateInfo;
+    pipelineCreateInfo.pViewportState = &viewportStateCreateInfo;
+    pipelineCreateInfo.pRasterizationState = &rasterizationStateCreateInfo;
+    pipelineCreateInfo.pMultisampleState = &multisamplingStateCreateInfo;
+    pipelineCreateInfo.pDepthStencilState = nullptr;
+    pipelineCreateInfo.pColorBlendState = &colorBlendingStateCreateInfo;
+    pipelineCreateInfo.pDynamicState = nullptr;
+
+    pipelineCreateInfo.layout = pipelineLayout;
+
+    pipelineCreateInfo.renderPass = renderPass;
+    pipelineCreateInfo.subpass = 0;
+
+    // Vulkan allows you to create a new graphics pipeline by deriving from an existing pipeline.
+    // It is less expensive to set up pipelines when they have much functionality in common with an existing pipeline
+    // And switching between pipelines from the same parent can also be done quicker.
+    pipelineCreateInfo.basePipelineHandle = VK_NULL_HANDLE;
+    pipelineCreateInfo.basePipelineIndex = -1;
+
+    graphicsPipeline = VK_NULL_HANDLE;
+    if (vkCreateGraphicsPipelines(logicalDevice, VK_NULL_HANDLE, 1, &pipelineCreateInfo, nullptr, &graphicsPipeline) != VK_SUCCESS) {
+        std::cout << "Failed to create graphics pipeline." << std::endl;
+        std::terminate();
+    }
 
     vkDestroyShaderModule(logicalDevice, vertShaderModule, nullptr);
     vkDestroyShaderModule(logicalDevice, fragShaderModule, nullptr);
+}
+
+void createRenderPass() {
+    // We will have a single color buffer attachment 
+    VkAttachmentDescription colorAttachment {};
+    colorAttachment.format = swapChainImageFormat;
+    colorAttachment.samples = VK_SAMPLE_COUNT_1_BIT;
+
+    // Determine what to do with the color attachment BEFORE rendering
+    // VK_ATTACHMENT_LOAD_OP_CLEAR = Clear the values to a constant at the start.
+    colorAttachment.loadOp = VK_ATTACHMENT_LOAD_OP_CLEAR;
+
+    // Determine what to do with the color attachment AFTER rendering
+    // VK_ATTACHMENT_STORE_OP_STORE = Rendered contents will be stored in memory and can be read later.
+    // We do this because we are interested in seeing the rendered triable on the screen.
+    colorAttachment.storeOp = VK_ATTACHMENT_STORE_OP_STORE;
+
+    // 'loadOp' and 'storeOp' relates to color and depth data,
+    // 'stencilLoadOp' and 'stencilStoreOP' relates to stencil data.
+    // We don't do anything with stencil data, so they are irrelevant.
+    colorAttachment.stencilLoadOp = VK_ATTACHMENT_LOAD_OP_DONT_CARE;
+    colorAttachment.stencilStoreOp = VK_ATTACHMENT_STORE_OP_DONT_CARE;
+
+    // Image layouts specify how the data in an image is organized in memory.
+    // we don't care about the initial layout of the image data, because we're going to clear it anyway.
+    colorAttachment.initialLayout = VK_IMAGE_LAYOUT_UNDEFINED;
+
+    // Final Layout specifies the layout the attachment image subresource will be transitioned to when a render pass instance ends.
+    // VK_IMAGE_LAYOUT_PRESENT_SRC_KHR specifies that the image can be presented to the screen via a swapchain.
+    colorAttachment.finalLayout = VK_IMAGE_LAYOUT_PRESENT_SRC_KHR;
+
+    // A single render pass can consist of multiple subpasses.
+    // Subpasses are subsequent rendering operations that depend on the contents of framebuffers in previous passes, applied one after the other.
+    // For now, we'll stick with a single subpass.
+    // Vulkan requires at least one subpass.
+
+    // Every subpass references one or more of the attachments that we've described.
+    // We only have a single attachment, and its in index 0 of the attachment array.
+    VkAttachmentReference colorAttachmentRef {};
+    colorAttachmentRef.attachment = 0;
+    // VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL specifies which layout we would like the attachment to have during a subpass that use this reference.
+    // We specify VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL because this shows intent to use it as a color buffer.
+    colorAttachmentRef.layout = VK_IMAGE_LAYOUT_COLOR_ATTACHMENT_OPTIMAL;
+
+    VkSubpassDescription subpassDescription {};
+    subpassDescription.pipelineBindPoint = VK_PIPELINE_BIND_POINT_GRAPHICS;
+    subpassDescription.colorAttachmentCount = 1;
+    subpassDescription.pColorAttachments = &colorAttachmentRef;
+
+    VkRenderPassCreateInfo renderPassCreateInfo {};
+    renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
+    renderPassCreateInfo.attachmentCount = 1;
+    renderPassCreateInfo.pAttachments = &colorAttachment;
+    renderPassCreateInfo.subpassCount = 1;
+    renderPassCreateInfo.pSubpasses = &subpassDescription;
+
+    if (vkCreateRenderPass(logicalDevice, &renderPassCreateInfo, nullptr, &renderPass) != VK_SUCCESS) {
+        std::cout << "Failed to create render pass." << std::endl;
+        std::terminate();
+    }
 }
 
 VkShaderModule createShaderModule(const std::vector<char>& code) {

@@ -27,6 +27,11 @@ void createImageViews();
 void createGraphicsPipeline();
 void createRenderPass();
 VkShaderModule createShaderModule(const std::vector<char>& code);
+void createFramebuffers();
+void createCommandPool();
+void createCommandBuffer();
+void drawFrame();
+void createSyncObjects();
 
 struct QueueFamilyIndices {
     // Index to queue supporting graphics operations
@@ -100,6 +105,12 @@ std::vector<VkImageView> swapChainImageViews;
 VkPipelineLayout pipelineLayout;
 VkRenderPass renderPass;
 VkPipeline graphicsPipeline;
+std::vector<VkFramebuffer> swapChainFramebuffers;
+VkCommandPool commandPool;
+VkCommandBuffer commandBuffer;
+VkSemaphore imageAvailableSemaphore;
+VkSemaphore renderFinishedSemaphore;
+VkFence inFlightFence;
 
 // Device extensions extend the capabilities of a specific Vulkan device (like a GPU)
 // These extensions affect the device and its operations, like providing additional features for rendering
@@ -232,6 +243,10 @@ int WINAPI WinMain(
     createImageViews();
     createGraphicsPipeline();
     createRenderPass();
+    createFramebuffers();
+    createCommandPool();
+    createCommandBuffer();
+    createSyncObjects();
 
     MSG msg = {};
     auto running = true;
@@ -249,15 +264,26 @@ int WINAPI WinMain(
         }
 
         // Update and render game here
+        drawFrame();
     }
 
     // Vulkan Cleanup
+
+    // Destroy semaphores and fences
+    vkDestroySemaphore(logicalDevice, renderFinishedSemaphore, nullptr);
+    vkDestroySemaphore(logicalDevice, imageAvailableSemaphore, nullptr);
+    vkDestroyFence(logicalDevice, inFlightFence, nullptr);
 
     // Destroy pipeline
     vkDestroyPipeline(logicalDevice, graphicsPipeline, nullptr);
 
     // Destroy pipeline layouts
     vkDestroyPipelineLayout(logicalDevice, pipelineLayout, nullptr);
+
+    // Framebuffers should be deleted before the image views and render pass
+    for (auto framebuffer : swapChainFramebuffers) {
+        vkDestroyFramebuffer(logicalDevice, framebuffer, nullptr);
+    }
 
     // Destroy render pass
     vkDestroyRenderPass(logicalDevice, renderPass, nullptr);
@@ -268,6 +294,9 @@ int WINAPI WinMain(
     for (auto imageView : swapChainImageViews) {
         vkDestroyImageView(logicalDevice, imageView, nullptr);
     }
+
+    // Destroy command pool for graphics queue
+    vkDestroyCommandPool(logicalDevice, commandPool, nullptr);
 
     vkDestroyDevice(logicalDevice, nullptr);
 
@@ -956,6 +985,194 @@ void createRenderPass() {
 
     if (vkCreateRenderPass(logicalDevice, &renderPassCreateInfo, nullptr, &renderPass) != VK_SUCCESS) {
         std::cout << "Failed to create render pass." << std::endl;
+        std::terminate();
+    }
+}
+
+void createFramebuffers() {
+    swapChainFramebuffers.resize(swapChainImageViews.size());
+
+    for (size_t i = 0; i < swapChainImageViews.size(); i++) {
+        VkImageView attachments[] = {
+            swapChainImageViews[i]
+        };
+
+        VkFramebufferCreateInfo framebufferCreateInfo {};
+        framebufferCreateInfo.sType = VK_STRUCTURE_TYPE_FRAMEBUFFER_CREATE_INFO;
+        framebufferCreateInfo.renderPass = renderPass;
+        framebufferCreateInfo.attachmentCount = 1;
+        framebufferCreateInfo.pAttachments = attachments;
+        framebufferCreateInfo.width = swapChainExtent.width;
+        framebufferCreateInfo.height = swapChainExtent.height;
+        framebufferCreateInfo.layers = 1;
+
+        if (vkCreateFramebuffer(logicalDevice, &framebufferCreateInfo, nullptr, &swapChainFramebuffers[i]) != VK_SUCCESS) {
+            std::cout << "Failed to create framebuffer." << std::endl;
+            std::terminate();
+        }
+    }
+}
+
+// Command pools are memory managers for command buffers.
+// They allocate memory for command buffers and also allow for recycling of command buffers.
+void createCommandPool() {
+    QueueFamilyIndices queueFamilyIndices = findQueueFamilies(physicalDevice);
+
+    // We create a command pool for the graphics family queue.
+    // Command pools can only allocate command buffers for a single, specific type of queue.
+    VkCommandPoolCreateInfo poolInfo {};
+    poolInfo.sType = VK_STRUCTURE_TYPE_COMMAND_POOL_CREATE_INFO;
+    // VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT = Allow command buffers to be rerecorded individually.
+    poolInfo.flags = VK_COMMAND_POOL_CREATE_RESET_COMMAND_BUFFER_BIT;
+    poolInfo.queueFamilyIndex = queueFamilyIndices.graphicsFamily.value();
+
+    if (vkCreateCommandPool(logicalDevice, &poolInfo, nullptr, &commandPool) != VK_SUCCESS) {
+        std::cout << "Failed to create command pool." << std::endl;
+        std::terminate();
+    }
+}
+
+// Command buffers are containers for recording commands that will be submitted to a device queue for execution.
+// These commands include drawing, compute operations, and resource state transitions.
+// There are two types of command buffers: primary and secondary.
+// Primary command buffers can be submitted to a queue, while secondary command buffers are executed by primary command buffers.
+void createCommandBuffer() {
+    VkCommandBufferAllocateInfo allocInfo {};
+    allocInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_ALLOCATE_INFO;
+    allocInfo.commandPool = commandPool;
+    allocInfo.level = VK_COMMAND_BUFFER_LEVEL_PRIMARY;
+    allocInfo.commandBufferCount = 1;
+
+    if (vkAllocateCommandBuffers(logicalDevice, &allocInfo, &commandBuffer) != VK_SUCCESS) {
+        std::cout << "Failed to allocate command buffer." << std::endl;
+        std::terminate();
+    }
+}
+
+void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
+    VkCommandBufferBeginInfo commandBufferBeginInfo {};
+    commandBufferBeginInfo.sType = VK_STRUCTURE_TYPE_COMMAND_BUFFER_BEGIN_INFO;
+    // flags specifies how we are going to use the command buffer.
+    commandBufferBeginInfo.flags = 0;
+    commandBufferBeginInfo.pInheritanceInfo = nullptr;
+
+    // If a command buffer was already recorded once, then a call to vkBeginCommandBuffer will implicitly reset it.
+    // It's not possible to append commands to a buffer at a later time.
+    if (vkBeginCommandBuffer(commandBuffer, &commandBufferBeginInfo) != VK_SUCCESS) {
+        std::cout << "Failed to begin recording command buffer." << std::endl;
+        std::terminate();
+    }
+
+    // Drawing starts by beginning a render pass with vkCmdBeginRenderPass.
+    VkRenderPassBeginInfo renderPassBeginInfo {};
+    renderPassBeginInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_BEGIN_INFO;
+    renderPassBeginInfo.renderPass = renderPass;
+    renderPassBeginInfo.framebuffer = swapChainFramebuffers[imageIndex];
+    // RenderArea defines the area of the framebuffer that will be rendered to.
+    // RenderArea must be contained within the framebuffer dimensions.
+    // If the RenderArea is smaller than the framebuffer, it may lead to performance cost.
+    renderPassBeginInfo.renderArea.offset = { 0, 0 };
+    renderPassBeginInfo.renderArea.extent = swapChainExtent;
+
+    // Define the clear values to use for VK_ATTACHMENT_LOAD_OP_CLEAR, which we used
+    // for the load operation of the color attachment.
+    // This is black with 100% opacity.
+    VkClearValue clearColor = { 0.0f, 0.0f, 0.0f, 1.0f };
+    renderPassBeginInfo.clearValueCount = 1;
+    renderPassBeginInfo.pClearValues = &clearColor;
+
+    // Record the command to begin a render pass.
+    // VK_SUBPASS_CONTENTS_INLINE = The render pass command will be embedded in the primary command buffer itself.
+    vkCmdBeginRenderPass(commandBuffer, &renderPassBeginInfo, VK_SUBPASS_CONTENTS_INLINE);
+
+    // Bind the graphics pipeline
+    vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
+
+    // Issue draw command
+    vkCmdDraw(commandBuffer, 3, 1, 0, 0);
+
+    // End the render pass
+    vkCmdEndRenderPass(commandBuffer);
+
+    // Finish recording the command buffer
+    if (vkEndCommandBuffer(commandBuffer) != VK_SUCCESS) {
+        std::cout << "Failed to record command buffer." << std::endl;
+        std::terminate();
+    }
+}
+
+// At a high level, rendering a frame in Vulkan consists of the following steps:
+// 1. Wait for the previous frame to finish
+// 2. Acquire an image from the swap chain
+// 3. Record a command buffer which draws the scene onto that image
+// 4. Submit the recorded command buffer
+// 5. Present the swap chain image
+void drawFrame() {
+    // Wait for our fence, which in this case signals that the previous frame has finished.
+    // The last parameter of vkWaitForFences is a timeout in milliseconds, and we specify the maximum value. Effectively disabling timeout.
+    vkWaitForFences(logicalDevice, 1, &inFlightFence, VK_TRUE, UINT64_MAX);
+
+    // After waiting, we need to manually reset the fence to unsignaled state.
+    vkResetFences(logicalDevice, 1, &inFlightFence);
+
+    // We aquire an image from the swap chain.
+    // First two parameters: the logical device and swap chain from which we wish to aquire an image.
+    // The third parameter specifies a timeout in nanoseconds for an image to become available. Using a max value effectively disables it.
+    // The next two parameters specify synchronization objects that are to be signaled when the presentation engine is finished using the image.
+    // That's the point in time where we can start drawing to it. We use our imageAvailableSemaphore semaphore here.
+    // The last parameter is an output to the index of the swap chain where an image has become available.
+    // The index refers to the VkImage in the swap chain images array. We use that index to pick a VkFrameBuffer.
+    uint32_t imageIndex;
+    vkAcquireNextImageKHR(logicalDevice, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+
+    // Before we start rendering, we reset the command buffer, so that it can be recorded again.
+    vkResetCommandBuffer(commandBuffer, 0);
+    // Record the command buffer with a new drawing operation
+    recordCommandBuffer(commandBuffer, imageIndex);
+
+    // Submit the command buffer to the graphics queue.
+    VkSubmitInfo submitInfo {};
+    submitInfo.sType = VK_STRUCTURE_TYPE_SUBMIT_INFO;
+
+    VkSemaphore waitSemaphores[] = { imageAvailableSemaphore };
+    VkPipelineStageFlags waitStages[] = { VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT };
+
+    submitInfo.waitSemaphoreCount = 1;
+    submitInfo.pWaitSemaphores = waitSemaphores;
+    submitInfo.pWaitDstStageMask = waitStages;
+
+    submitInfo.commandBufferCount = 1;
+    submitInfo.pCommandBuffers = &commandBuffer;
+
+    // We specify the semaphores to singal once the comamnd buffers have finished execution.
+    // Here, we want to signal the renderFinishedSemaphore, to indicate that rendering has finished.
+    VkSemaphore signalSemaphores[] = { renderFinishedSemaphore };
+    submitInfo.signalSemaphoreCount = 1;
+    submitInfo.pSignalSemaphores = signalSemaphores;
+
+    // Submit the command buffer to the graphics queue.
+    // The inFlightFence parameter is the fence that will be signaled when the command buffer has finished execution.
+    // This will indicate to us when it is safe to reuse the command buffer for another frame.
+    if (vkQueueSubmit(graphicsQueue, 1, &submitInfo, inFlightFence) != VK_SUCCESS) {
+        std::cout << "Failed to submit draw command buffer." << std::endl;
+        std::terminate();
+    }
+}
+
+void createSyncObjects() {
+    VkSemaphoreCreateInfo semaphoreInfo {};
+    semaphoreInfo.sType = VK_STRUCTURE_TYPE_SEMAPHORE_CREATE_INFO;
+
+    VkFenceCreateInfo fenceInfo {};
+    fenceInfo.sType = VK_STRUCTURE_TYPE_FENCE_CREATE_INFO;
+    // We create the fence being initially in a signaled state.
+    // We do this so that the first time we wait for the fence in the draw function, it won't block indefinitely.
+    fenceInfo.flags = VK_FENCE_CREATE_SIGNALED_BIT;
+
+    if (vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &imageAvailableSemaphore) != VK_SUCCESS ||
+        vkCreateSemaphore(logicalDevice, &semaphoreInfo, nullptr, &renderFinishedSemaphore) != VK_SUCCESS ||
+        vkCreateFence(logicalDevice, &fenceInfo, nullptr, &inFlightFence) != VK_SUCCESS) {
+        std::cout << "Failed to create synchronization objects." << std::endl;
         std::terminate();
     }
 }

@@ -265,6 +265,7 @@ int WINAPI WinMain(
 
         // Update and render game here
         drawFrame();
+        vkDeviceWaitIdle(logicalDevice);
     }
 
     // Vulkan Cleanup
@@ -579,6 +580,14 @@ VkPresentModeKHR chooseSwapPresentMode(const std::vector<VkPresentModeKHR>& avai
 // A VkExtend2D is essentially just a struct defining a width and height. A two dimensional extent. It's the context of it that matters.
 VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
 {
+    VkExtent2D actualExtent = {
+        static_cast<uint32_t>(784),
+        static_cast<uint32_t>(561)
+    };
+
+    return actualExtent;
+
+    /*
     if (capabilities.currentExtent.width != UINT32_MAX)
     {
         return capabilities.currentExtent;
@@ -586,6 +595,7 @@ VkExtent2D chooseSwapExtent(const VkSurfaceCapabilitiesKHR& capabilities)
 
     std::cout << "Failed to choose swap extent!" << std::endl;
     std::terminate();
+    */
 }
 
 void createSwapChain()
@@ -638,8 +648,6 @@ void createSwapChain()
         swapChainCreateInfo.pQueueFamilyIndices = queueFamilyIndices.data();
     } else {
         swapChainCreateInfo.imageSharingMode = VK_SHARING_MODE_EXCLUSIVE;
-        swapChainCreateInfo.queueFamilyIndexCount = 0;
-        swapChainCreateInfo.pQueueFamilyIndices = nullptr;
     }
 
     // You can specify that a certain transform should be applied to the images in the swap chain if it is supported.
@@ -677,7 +685,10 @@ void createSwapChain()
     // So we have to query how many images were actually created.
     swapChainImages.resize(imageCount);
 
-    vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
+    auto getSwapchainResult = vkGetSwapchainImagesKHR(logicalDevice, swapChain, &imageCount, swapChainImages.data());
+
+    swapChainImageFormat = surfaceFormat.format;
+    swapChainExtent = extent;
 }
 
 void createImageViews()
@@ -879,6 +890,19 @@ void createGraphicsPipeline() {
     colorBlendingStateCreateInfo.attachmentCount = 1;
     colorBlendingStateCreateInfo.pAttachments = &colorBlendAttachment;
     colorBlendingStateCreateInfo.blendConstants[0] = 0.0f;
+    colorBlendingStateCreateInfo.blendConstants[1] = 0.0f;
+    colorBlendingStateCreateInfo.blendConstants[2] = 0.0f;
+    colorBlendingStateCreateInfo.blendConstants[3] = 0.0f;
+
+    std::vector<VkDynamicState> dynamicStates = {
+        VK_DYNAMIC_STATE_VIEWPORT,
+        VK_DYNAMIC_STATE_SCISSOR
+    };
+
+    VkPipelineDynamicStateCreateInfo dynamicState{};
+    dynamicState.sType = VK_STRUCTURE_TYPE_PIPELINE_DYNAMIC_STATE_CREATE_INFO;
+    dynamicState.dynamicStateCount = static_cast<uint32_t>(dynamicStates.size());
+    dynamicState.pDynamicStates = dynamicStates.data();
 
     // Uniform values in Shaders needs to be specified during pipeline creation through VkPipelineLayout objects.
     // Currently I don't use uniform values, but it is required to create an empty VkPipelineLayout object at minimum.
@@ -906,7 +930,7 @@ void createGraphicsPipeline() {
     pipelineCreateInfo.pMultisampleState = &multisamplingStateCreateInfo;
     pipelineCreateInfo.pDepthStencilState = nullptr;
     pipelineCreateInfo.pColorBlendState = &colorBlendingStateCreateInfo;
-    pipelineCreateInfo.pDynamicState = nullptr;
+    pipelineCreateInfo.pDynamicState = &dynamicState;
 
     pipelineCreateInfo.layout = pipelineLayout;
 
@@ -976,12 +1000,22 @@ void createRenderPass() {
     subpassDescription.colorAttachmentCount = 1;
     subpassDescription.pColorAttachments = &colorAttachmentRef;
 
+    VkSubpassDependency subpassDependency {};
+    subpassDependency.srcSubpass = VK_SUBPASS_EXTERNAL;
+    subpassDependency.dstSubpass = 0;
+    subpassDependency.srcStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subpassDependency.srcAccessMask = 0;
+    subpassDependency.dstStageMask = VK_PIPELINE_STAGE_COLOR_ATTACHMENT_OUTPUT_BIT;
+    subpassDependency.dstAccessMask = VK_ACCESS_COLOR_ATTACHMENT_WRITE_BIT;
+
     VkRenderPassCreateInfo renderPassCreateInfo {};
     renderPassCreateInfo.sType = VK_STRUCTURE_TYPE_RENDER_PASS_CREATE_INFO;
     renderPassCreateInfo.attachmentCount = 1;
     renderPassCreateInfo.pAttachments = &colorAttachment;
     renderPassCreateInfo.subpassCount = 1;
     renderPassCreateInfo.pSubpasses = &subpassDescription;
+    renderPassCreateInfo.dependencyCount = 1;
+    renderPassCreateInfo.pDependencies = &subpassDependency;
 
     if (vkCreateRenderPass(logicalDevice, &renderPassCreateInfo, nullptr, &renderPass) != VK_SUCCESS) {
         std::cout << "Failed to create render pass." << std::endl;
@@ -1088,6 +1122,20 @@ void recordCommandBuffer(VkCommandBuffer commandBuffer, uint32_t imageIndex) {
     // Bind the graphics pipeline
     vkCmdBindPipeline(commandBuffer, VK_PIPELINE_BIND_POINT_GRAPHICS, graphicsPipeline);
 
+    VkViewport viewport{};
+    viewport.x = 0.0f;
+    viewport.y = 0.0f;
+    viewport.width = (float) swapChainExtent.width;
+    viewport.height = (float) swapChainExtent.height;
+    viewport.minDepth = 0.0f;
+    viewport.maxDepth = 1.0f;
+    vkCmdSetViewport(commandBuffer, 0, 1, &viewport);
+
+    VkRect2D scissor{};
+    scissor.offset = {0, 0};
+    scissor.extent = swapChainExtent;
+    vkCmdSetScissor(commandBuffer, 0, 1, &scissor);
+
     // Issue draw command
     vkCmdDraw(commandBuffer, 3, 1, 0, 0);
 
@@ -1123,7 +1171,7 @@ void drawFrame() {
     // The last parameter is an output to the index of the swap chain where an image has become available.
     // The index refers to the VkImage in the swap chain images array. We use that index to pick a VkFrameBuffer.
     uint32_t imageIndex;
-    vkAcquireNextImageKHR(logicalDevice, swapChain, UINT64_MAX, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
+    auto aquireImageKhrResult = vkAcquireNextImageKHR(logicalDevice, swapChain, 300000000000, imageAvailableSemaphore, VK_NULL_HANDLE, &imageIndex);
 
     // Before we start rendering, we reset the command buffer, so that it can be recorded again.
     vkResetCommandBuffer(commandBuffer, 0);
@@ -1157,6 +1205,20 @@ void drawFrame() {
         std::cout << "Failed to submit draw command buffer." << std::endl;
         std::terminate();
     }
+
+    VkPresentInfoKHR presentInfo {};
+    presentInfo.sType = VK_STRUCTURE_TYPE_PRESENT_INFO_KHR;
+
+    presentInfo.waitSemaphoreCount = 1;
+    presentInfo.pWaitSemaphores = signalSemaphores;
+
+    VkSwapchainKHR swapChains[] = { swapChain };
+
+    presentInfo.swapchainCount = 1;
+    presentInfo.pSwapchains = swapChains;
+    presentInfo.pImageIndices = &imageIndex;
+
+    vkQueuePresentKHR(presentQueue, &presentInfo);
 }
 
 void createSyncObjects() {
